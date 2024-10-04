@@ -1,10 +1,16 @@
 import warnings
+
 import torch
 
 try:
     from dot.utils import torch3d
 except ModuleNotFoundError:
-    torch3d = None
+    try:
+        import pytorch3d.ops
+
+        torch3d = pytorch3d.ops
+    except ModuleNotFoundError:
+        torch3d = None
 
 if torch3d:
     TORCH3D_AVAILABLE = True
@@ -25,8 +31,12 @@ def interpolate(src_points, tgt_points, grid, version="torch3d"):
                 "Torch3D is not available. For optimal speed and memory consumption, consider setting it up.",
                 stacklevel=2,
             )
-        dis = (grid ** 2).sum(-1)[:, None] + (src_pos ** 2).sum(-1)[:, :, None] - 2 * src_pos @ grid.permute(0, 2, 1)
-        dis[src_alpha == 0] = float('inf')
+        dis = (
+            (grid**2).sum(-1)[:, None]
+            + (src_pos**2).sum(-1)[:, :, None]
+            - 2 * src_pos @ grid.permute(0, 2, 1)
+        )
+        dis[src_alpha == 0] = float("inf")
         _, idx = dis.min(dim=1)
         idx = idx.view(B, H * W, 1)
     elif version == "torch3d":
@@ -37,7 +47,9 @@ def interpolate(src_points, tgt_points, grid, version="torch3d"):
         cum_lengths = lengths.cumsum(dim=0)
         cum_lengths = torch.cat([torch.zeros_like(cum_lengths[:1]), cum_lengths[:-1]])
         src_pos = torch3d.packed_to_padded(src_pos_packed, cum_lengths, max_length)
-        tgt_points = torch3d.packed_to_padded(tgt_points_packed, cum_lengths, max_length)
+        tgt_points = torch3d.packed_to_padded(
+            tgt_points_packed, cum_lengths, max_length
+        )
         _, idx, _ = torch3d.knn_points(grid, src_pos, lengths2=lengths, return_nn=False)
         idx = idx.view(B, H * W, 1)
 

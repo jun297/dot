@@ -14,11 +14,18 @@ class OpticalFlow(nn.Module):
         super().__init__()
         model_args = read_config(config)
         model_dict = {"raft": RAFT}
-        self.model = model_dict[model_args.name](model_args)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         self.name = model_args.name
+        self.model = model_dict[model_args.name](model_args)
+
+        self.model = self.model.to(self.device)
+
         if load_path is not None:
-            device = next(self.model.parameters()).device
-            self.model.load_state_dict(torch.load(load_path, map_location=device))
+            state_dict = torch.load(load_path, map_location=self.device)
+            self.model.load_state_dict(state_dict)
+
         coarse_height, coarse_width = height // model_args.patch_size, width // model_args.patch_size
         self.register_buffer("coarse_grid", get_grid(coarse_height, coarse_width))
 

@@ -1,30 +1,90 @@
-from tqdm import tqdm
+import time
+from functools import wraps
+
 import torch
 from torch import nn
+from tqdm import tqdm
+
+from dot.utils.io import read_config
+from dot.utils.torch import get_grid, sample_mask_points, sample_points
 
 from .optical_flow import OpticalFlow
 from .shelf import CoTracker, CoTracker2, Tapir
-from dot.utils.io import read_config
-from dot.utils.torch import sample_points, sample_mask_points, get_grid
+
+
+def performance_measure(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Reset CUDA memory stats
+        torch.cuda.reset_peak_memory_stats()
+
+        # Measure start time
+        start_time = time.time()
+
+        # Execute the function
+        result = func(*args, **kwargs)
+
+        # Measure end time
+        end_time = time.time()
+
+        # Calculate peak memory usage
+        peak_memory = torch.cuda.max_memory_allocated() / 1e9
+
+        # Calculate elapsed time
+        elapsed_time = end_time - start_time
+
+        print(f"Function '{func.__name__}':")
+        print(f"  - Peak memory usage: {peak_memory:.2f} GB")
+        print(f"  - Execution time: {elapsed_time:.2f} seconds")
+
+        return result
+
+    return wrapper
 
 
 class PointTracker(nn.Module):
-    def __init__(self,  height, width, tracker_config, tracker_path, estimator_config, estimator_path):
+    def __init__(
+        self,
+        height,
+        width,
+        tracker_config,
+        tracker_path,
+        estimator_config,
+        estimator_path,
+    ):
         super().__init__()
         model_args = read_config(tracker_config)
         model_dict = {
             "cotracker": CoTracker,
             "cotracker2": CoTracker2,
             "tapir": Tapir,
-            "bootstapir": Tapir
+            "bootstapir": Tapir,
         }
+        print(f"Using model {model_args.name}")
+        # print arguments
+        print(f"Height: {height}")
+        print(f"Width: {width}")
+        print(f"Model arguments: {model_args}")
+        print(f"Estimator config: {estimator_config}")
+        print(f"Estimator path: {estimator_path}")
+        print(f"Tracker path: {tracker_path}")
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         self.name = model_args.name
         self.model = model_dict[model_args.name](model_args)
-        if tracker_path is not None:
-            device = next(self.model.parameters()).device
-            self.model.load_state_dict(torch.load(tracker_path, map_location=device), strict=False)
-        self.optical_flow_estimator = OpticalFlow(height, width, estimator_config, estimator_path)
+        self.model = self.model.to(self.device)
 
+        if tracker_path is not None:
+            # Load the state dict to the same device as the model
+            state_dict = torch.load(tracker_path, map_location=self.device)
+            self.model.load_state_dict(state_dict)
+
+        self.optical_flow_estimator = OpticalFlow(
+            height, width, estimator_config, estimator_path
+        )
+
+    @performance_measure
     def forward(self, data, mode, **kwargs):
         if mode == "tracks_at_motion_boundaries":
             return self.get_tracks_at_motion_boundaries(data, **kwargs)
@@ -33,10 +93,14 @@ class PointTracker(nn.Module):
         else:
             raise ValueError(f"Unknown mode {mode}")
 
-    def get_tracks_at_motion_boundaries(self, data, num_tracks=8192, sim_tracks=2048, sample_mode="all", **kwargs):
+    def get_tracks_at_motion_boundaries(
+        self, data, num_tracks=8192, sim_tracks=2048, sample_mode="all", **kwargs
+    ):
         video = data["video"]
         N, S = num_tracks, sim_tracks
         B, T, _, H, W = video.shape
+
+        print(f"Tracker Video shape: {video.shape}")
         assert N % S == 0
 
         # Define sampling strategy
@@ -61,7 +125,11 @@ class PointTracker(nn.Module):
         if flip:
             video = video.flip(dims=[1])
 
+        # 0.75G
         # Track batches of points
+        print(
+            f"Memory before batch in point_tracking, videomotiontracker: {torch.cuda.memory_allocated() / 1e9:.2f} GB"
+        )
         tracks = []
         motion_boundaries = {}
         cache_features = True
@@ -72,13 +140,31 @@ class PointTracker(nn.Module):
                     continue
                 if not src_step in motion_boundaries:
                     tgt_step = src_step - 1 if src_step > 0 else src_step + 1
-                    data = {"src_frame": video[:, src_step], "tgt_frame": video[:, tgt_step]}
-                    pred = self.optical_flow_estimator(data, mode="motion_boundaries", **kwargs)
+                    data = {
+                        "src_frame": video[:, src_step],
+                        "tgt_frame": video[:, tgt_step],
+                    }
+                    pred = self.optical_flow_estimator(
+                        data, mode="motion_boundaries", **kwargs
+                    )
                     motion_boundaries[src_step] = pred["motion_boundaries"]
                 src_boundaries = motion_boundaries[src_step]
                 src_points.append(sample_points(src_step, src_boundaries, src_samples))
+
             src_points = torch.cat(src_points, dim=1)
-            traj, vis = self.model(video, src_points, backward_tracking, cache_features)
+            # DEBUG
+            print(
+                f"Memory before tracking model in point_tracking, tracker: {torch.cuda.memory_allocated() / 1e9:.2f} GB"
+            )
+
+            # src_points are diff
+            with torch.no_grad():
+                traj, vis = self.model(
+                    video, src_points, backward_tracking, cache_features
+                )
+            print(
+                f"Memory after tracking model in point_tracking, tracker: {torch.cuda.memory_allocated() / 1e9:.2f} GB"
+            )
             tracks.append(torch.cat([traj, vis[..., None]], dim=-1))
             cache_features = False
         tracks = torch.cat(tracks, dim=2)
