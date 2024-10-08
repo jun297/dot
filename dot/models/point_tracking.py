@@ -12,6 +12,7 @@ from .optical_flow import OpticalFlow
 from .shelf import CoTracker, CoTracker2, Tapir
 
 
+
 def performance_measure(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -125,11 +126,8 @@ class PointTracker(nn.Module):
         if flip:
             video = video.flip(dims=[1])
 
-        # 0.75G
         # Track batches of points
-        print(
-            f"Memory before batch in point_tracking, videomotiontracker: {torch.cuda.memory_allocated() / 1e9:.2f} GB"
-        )
+
         tracks = []
         motion_boundaries = {}
         cache_features = True
@@ -152,19 +150,13 @@ class PointTracker(nn.Module):
                 src_points.append(sample_points(src_step, src_boundaries, src_samples))
 
             src_points = torch.cat(src_points, dim=1)
-            # DEBUG
-            print(
-                f"Memory before tracking model in point_tracking, tracker: {torch.cuda.memory_allocated() / 1e9:.2f} GB"
-            )
 
             # src_points are diff
             with torch.no_grad():
                 traj, vis = self.model(
                     video, src_points, backward_tracking, cache_features
                 )
-            print(
-                f"Memory after tracking model in point_tracking, tracker: {torch.cuda.memory_allocated() / 1e9:.2f} GB"
-            )
+
             tracks.append(torch.cat([traj, vis[..., None]], dim=-1))
             cache_features = False
         tracks = torch.cat(tracks, dim=2)

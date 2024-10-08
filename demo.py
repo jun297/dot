@@ -1,16 +1,17 @@
-import torch
-from torch import nn
+import math
 import os.path as osp
-from tqdm import tqdm
-from matplotlib import colormaps
+
 import numpy as np
 import scipy
-import math
+import torch
+from matplotlib import colormaps
+from torch import nn
+from tqdm import tqdm
 
-from dot.utils.options.demo_options import DemoOptions
 from dot.models import create_model
-from dot.utils.io import create_folder, write_video, read_video, read_frame
-from dot.utils.torch import to_device, get_grid
+from dot.utils.io import create_folder, read_frame, read_video, write_video
+from dot.utils.options.demo_options import DemoOptions
+from dot.utils.torch import get_grid, to_device
 
 
 class Visualizer(nn.Module):
@@ -33,7 +34,11 @@ class Visualizer(nn.Module):
             video = self.plot_spaghetti(data, mode)
         else:
             raise ValueError(f"Unknown mode {mode}")
-        save_path = osp.join(self.result_path, mode) + ".mp4" if self.save_mode == "video" else ""
+        save_path = (
+            osp.join(self.result_path, mode) + ".mp4"
+            if self.save_mode == "video"
+            else ""
+        )
         write_video(video, save_path)
 
     def plot_overlay(self, data, mode):
@@ -64,12 +69,15 @@ class Visualizer(nn.Module):
                 rainbow_occ, alpha_occ = draw(tgt_pos, 1 - tgt_vis, col, H, W)
                 stripes = torch.arange(H).view(-1, 1) + torch.arange(W).view(1, -1)
                 stripes = stripes % 9 < 3
-                rainbow_occ[stripes] = 1.
+                rainbow_occ[stripes] = 1.0
                 rainbow = alpha * rainbow + (1 - alpha) * rainbow_occ
                 alpha = alpha + (1 - alpha) * alpha_occ
 
             # Overlay rainbow points over target frame
-            tgt_frame = self.overlay_factor * alpha * rainbow + (1 - self.overlay_factor * alpha) * tgt_frame
+            tgt_frame = (
+                self.overlay_factor * alpha * rainbow
+                + (1 - self.overlay_factor * alpha) * tgt_frame
+            )
 
             # Convert from H W C to C H W
             tgt_frame = tgt_frame.permute(2, 0, 1)
@@ -78,17 +86,22 @@ class Visualizer(nn.Module):
         return video
 
     def plot_spaghetti(self, data, mode):
-        bg_color = 1.
+        bg_color = 1.0
         T, C, H, W = data["video"].shape
-        G, S, R, L = self.spaghetti_grid, self.spaghetti_scale, self.spaghetti_radius, self.spaghetti_length
+        G, S, R, L = (
+            self.spaghetti_grid,
+            self.spaghetti_scale,
+            self.spaghetti_radius,
+            self.spaghetti_length,
+        )
         D = self.spaghetti_dropout
 
         # Extract a grid of tracks
         mask = data["mask"] if "mask" in mode else torch.ones_like(data["mask"])
-        mask = mask[G // 2:-G // 2 + 1:G, G // 2:-G // 2 + 1:G]
+        mask = mask[G // 2 : -G // 2 + 1 : G, G // 2 : -G // 2 + 1 : G]
         tracks = data["tracks"]
         if tracks.ndim == 4:
-            tracks = tracks[:, G // 2:-G // 2 + 1:G, G // 2:-G // 2 + 1:G]
+            tracks = tracks[:, G // 2 : -G // 2 + 1 : G, G // 2 : -G // 2 + 1 : G]
             tracks = tracks[:, mask]
         elif D > 0:
             N = tracks.size(1)
@@ -104,8 +117,8 @@ class Visualizer(nn.Module):
         cur_frame = None
         cur_alpha = None
         grid = get_grid(H, W).cuda()
-        grid[..., 0] *= (W - 1)
-        grid[..., 1] *= (H - 1)
+        grid[..., 0] *= W - 1
+        grid[..., 1] *= H - 1
         for tgt_step in tqdm(range(T), leave=False, desc="Plot target frame"):
             for delta in range(L):
                 # Plot rainbow points
@@ -113,7 +126,9 @@ class Visualizer(nn.Module):
                 tgt_vis = torch.ones_like(tgt_pos[..., 0])
                 tgt_pos = project(tgt_pos, tgt_step * L + delta, T * L, H, W)
                 tgt_col = col.clone()
-                rainbow, alpha = draw(S * tgt_pos, tgt_vis, tgt_col, int(S * H), int(S * W), radius=R)
+                rainbow, alpha = draw(
+                    S * tgt_pos, tgt_vis, tgt_col, int(S * H), int(S * W), radius=R
+                )
                 rainbow, alpha = rainbow.cpu(), alpha.cpu()
 
                 # Overlay rainbow points over previous points / frames
@@ -126,19 +141,29 @@ class Visualizer(nn.Module):
 
                 plot_first = "first" in mode and tgt_step == 0 and delta == 0
                 plot_last = "last" in mode and delta == 0
-                plot_every = "every" in mode and delta == 0 and tgt_step % self.spaghetti_every == 0
+                plot_every = (
+                    "every" in mode
+                    and delta == 0
+                    and tgt_step % self.spaghetti_every == 0
+                )
                 if delta == 0:
                     if plot_first or plot_last or plot_every:
                         # Plot target frame
-                        tgt_col = data["video"][tgt_step].permute(1, 2, 0).reshape(-1, 3)
+                        tgt_col = (
+                            data["video"][tgt_step].permute(1, 2, 0).reshape(-1, 3)
+                        )
                         tgt_pos = grid.view(-1, 2)
                         tgt_vis = torch.ones_like(tgt_pos[..., 0])
                         tgt_pos = project(tgt_pos, tgt_step * L + delta, T * L, H, W)
-                        tgt_frame, alpha_frame = draw(S * tgt_pos, tgt_vis, tgt_col, int(S * H), int(S * W))
+                        tgt_frame, alpha_frame = draw(
+                            S * tgt_pos, tgt_vis, tgt_col, int(S * H), int(S * W)
+                        )
                         tgt_frame, alpha_frame = tgt_frame.cpu(), alpha_frame.cpu()
 
                         # Overlay target frame over previous points / frames
-                        tgt_frame = alpha_frame * tgt_frame + (1 - alpha_frame) * cur_frame
+                        tgt_frame = (
+                            alpha_frame * tgt_frame + (1 - alpha_frame) * cur_frame
+                        )
                         alpha_frame = 1 - (1 - cur_alpha) * (1 - alpha_frame)
 
                         # Add last points on top
@@ -146,13 +171,19 @@ class Visualizer(nn.Module):
                         alpha_frame = 1 - (1 - alpha_frame) * (1 - alpha)
 
                         # Set background color
-                        tgt_frame = alpha_frame * tgt_frame + (1 - alpha_frame) * torch.ones_like(tgt_frame) * bg_color
+                        tgt_frame = (
+                            alpha_frame * tgt_frame
+                            + (1 - alpha_frame) * torch.ones_like(tgt_frame) * bg_color
+                        )
 
                         if plot_first or plot_every:
                             cur_frame = tgt_frame
                             cur_alpha = alpha_frame
                     else:
-                        tgt_frame = cur_alpha * cur_frame + (1 - cur_alpha) * torch.ones_like(cur_frame) * bg_color
+                        tgt_frame = (
+                            cur_alpha * cur_frame
+                            + (1 - cur_alpha) * torch.ones_like(cur_frame) * bg_color
+                        )
 
                     # Convert from H W C to C H W
                     tgt_frame = tgt_frame.permute(2, 0, 1)
@@ -160,9 +191,13 @@ class Visualizer(nn.Module):
                     # Translate everything to make the target frame look static
                     if "static" in mode:
                         end_pos = project(torch.tensor([[0, 0]]), T * L, T * L, H, W)[0]
-                        cur_pos = project(torch.tensor([[0, 0]]), tgt_step * L + delta, T * L, H, W)[0]
+                        cur_pos = project(
+                            torch.tensor([[0, 0]]), tgt_step * L + delta, T * L, H, W
+                        )[0]
                         delta_pos = S * (end_pos - cur_pos)
-                        tgt_frame = translation(tgt_frame, delta_pos[0], delta_pos[1], bg_color)
+                        tgt_frame = translation(
+                            tgt_frame, delta_pos[0], delta_pos[1], bg_color
+                        )
                     video.append(tgt_frame)
         video = torch.stack(video)
         return video
@@ -174,7 +209,9 @@ def translation(frame, dx, dy, pad_value):
     grid[..., 0] = grid[..., 0] - (dx / (W - 1))
     grid[..., 1] = grid[..., 1] - (dy / (H - 1))
     frame = frame - pad_value
-    frame = torch.nn.functional.grid_sample(frame[None], grid[None] * 2 - 1, mode='bilinear', align_corners=True)[0]
+    frame = torch.nn.functional.grid_sample(
+        frame[None], grid[None] * 2 - 1, mode="bilinear", align_corners=True
+    )[0]
     frame = frame + pad_value
     return frame
 
@@ -207,7 +244,12 @@ def draw(pos, vis, col, height, width, radius=1):
         pos, col = get_radius_neighbors(pos, col, radius)
     else:
         pos, col = get_cardinal_neighbors(pos, col)
-    inbound = (pos[:, 0] >= 0) & (pos[:, 0] <= W - 1) & (pos[:, 1] >= 0) & (pos[:, 1] <= H - 1)
+    inbound = (
+        (pos[:, 0] >= 0)
+        & (pos[:, 0] <= W - 1)
+        & (pos[:, 1] >= 0)
+        & (pos[:, 1] <= H - 1)
+    )
     pos = pos[inbound]
     col = col[inbound]
     pos = pos.round().long()
@@ -248,9 +290,11 @@ def get_radius_neighbors(pos, col, radius):
     R = math.ceil(radius)
     center = torch.stack([pos[:, 0].round(), pos[:, 1].round()], dim=-1)
     nn = torch.arange(-R, R + 1)
-    nn = torch.stack([nn[None, :].expand(2 * R + 1, -1), nn[:, None].expand(-1, 2 * R + 1)], dim=-1)
+    nn = torch.stack(
+        [nn[None, :].expand(2 * R + 1, -1), nn[:, None].expand(-1, 2 * R + 1)], dim=-1
+    )
     nn = nn.view(-1, 2).cuda()
-    in_radius = nn[:, 0] ** 2 + nn[:, 1] ** 2 <= radius ** 2
+    in_radius = nn[:, 0] ** 2 + nn[:, 1] ** 2 <= radius**2
     nn = nn[in_radius]
     w = 1 - nn.pow(2).sum(-1).sqrt() / radius + 0.01
     w = w[None].expand(pos.size(0), -1).reshape(-1)
@@ -268,17 +312,13 @@ def project(pos, t, time_steps, heigh, width):
     pos = pos * 0.25
     t = 1 - torch.ones_like(pos[..., :1]) * t / (T - 1)
     pos = torch.cat([pos, t], dim=-1)
-    M = torch.tensor([
-        [0.8, 0, 0.5],
-        [-0.2, 1.0, 0.1],
-        [0.0, 0.0, 0.0]
-    ])
+    M = torch.tensor([[0.8, 0, 0.5], [-0.2, 1.0, 0.1], [0.0, 0.0, 0.0]])
     pos = pos @ M.t().to(pos.device)
     pos = pos[..., :2]
     pos[..., 0] += 0.25
     pos[..., 1] += 0.45
-    pos[..., 0] *= (W - 1)
-    pos[..., 1] *= (H - 1)
+    pos[..., 0] *= W - 1
+    pos[..., 1] *= H - 1
     return pos
 
 
@@ -290,7 +330,9 @@ def main(args):
     tracks_path = osp.join(args.result_path, "tracks.pth")
     create_folder(args.result_path)
 
-    video = read_video(osp.join(args.data_root, args.video_path), resolution=resolution).cuda() # , time_steps=20
+    video = read_video(
+        osp.join(args.data_root, args.video_path), resolution=resolution
+    ).cuda()  # , time_steps=20
 
     if not osp.exists(tracks_path) or args.recompute_tracks:
         with torch.no_grad():
@@ -302,16 +344,14 @@ def main(args):
         tracks = torch.load(tracks_path)
 
     mask_path = osp.join(args.data_root, args.mask_path)
-    if any(["mask" in mode] for mode in args.visualization_modes) and osp.exists(mask_path):
+    if any(["mask" in mode] for mode in args.visualization_modes) and osp.exists(
+        mask_path
+    ):
         mask = read_frame(mask_path, resolution=resolution)[0] > 0.5
     else:
         mask = torch.ones(args.height, args.width).bool()
 
-    data = {
-        "video": video,
-        "tracks": tracks,
-        "mask": mask
-    }
+    data = {"video": video, "tracks": tracks, "mask": mask}
 
     data = to_device(data, "cuda")
 
