@@ -12,7 +12,6 @@ from .optical_flow import OpticalFlow
 from .shelf import CoTracker, CoTracker2, Tapir
 
 
-
 def performance_measure(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -63,11 +62,9 @@ class PointTracker(nn.Module):
         }
         print(f"Using model {model_args.name}")
         # print arguments
-        print(f"Height: {height}")
-        print(f"Width: {width}")
+        print(f"Height: {height}, Width: {width}")
         print(f"Model arguments: {model_args}")
-        print(f"Estimator config: {estimator_config}")
-        print(f"Estimator path: {estimator_path}")
+        print(f"Estimator config: {estimator_config}, Estimator path: {estimator_path}")
         print(f"Tracker path: {tracker_path}")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -95,7 +92,14 @@ class PointTracker(nn.Module):
             raise ValueError(f"Unknown mode {mode}")
 
     def get_tracks_at_motion_boundaries(
-        self, data, num_tracks=8192, sim_tracks=2048, sample_mode="all", **kwargs
+        self,
+        data,
+        num_tracks=8192,
+        sim_tracks=2048,
+        sample_mode="all",
+        random_sampling=True,
+        boundary_sampling_ratio=0.5,
+        **kwargs,
     ):
         video = data["video"]
         N, S = num_tracks, sim_tracks
@@ -105,9 +109,22 @@ class PointTracker(nn.Module):
         assert N % S == 0
 
         # Define sampling strategy
+
+        # This is the bottleneck, sample points per frame takes 0.3 second for one iteration
+        # But if so, why is this slow then single segment?
+        # TODO: improved sampling
+        # if this sees all frames in the video,
+        # number of samples can be decided via the amplitude of the motion
+
         if sample_mode == "all":
             samples_per_step = [S // T for _ in range(T)]
             samples_per_step[0] += S - sum(samples_per_step)
+            backward_tracking = True
+            flip = False
+        elif sample_mode == "all_distributed":
+            # Distribute samples to all frames (early frames first)
+            samples_per_step = [(S + T - (i + 1)) // T for i in range(T)]
+            assert sum(samples_per_step) == S
             backward_tracking = True
             flip = False
         elif sample_mode == "first":
@@ -127,15 +144,22 @@ class PointTracker(nn.Module):
             video = video.flip(dims=[1])
 
         # Track batches of points
-
+        # This may be possible to parallelize
         tracks = []
         motion_boundaries = {}
         cache_features = True
+
+        print(
+            f"Sample mode: {sample_mode}, Number of samples per step: {samples_per_step}"
+        )
+
+        motion_boundaries_time = time.time()
         for _ in tqdm(range(N // S), desc="Track batch of points", leave=False):
             src_points = []
             for src_step, src_samples in enumerate(samples_per_step):
                 if src_samples == 0:
                     continue
+
                 if not src_step in motion_boundaries:
                     tgt_step = src_step - 1 if src_step > 0 else src_step + 1
                     data = {
@@ -146,10 +170,23 @@ class PointTracker(nn.Module):
                         data, mode="motion_boundaries", **kwargs
                     )
                     motion_boundaries[src_step] = pred["motion_boundaries"]
+
                 src_boundaries = motion_boundaries[src_step]
-                src_points.append(sample_points(src_step, src_boundaries, src_samples))
+
+                point_sampling_time = time.time()
+
+                src_points.append(
+                    sample_points(
+                        src_step,
+                        src_boundaries,
+                        src_samples,
+                        random_sampling=random_sampling,
+                        boundary_sampling_ratio=boundary_sampling_ratio,
+                    ),
+                )
 
             src_points = torch.cat(src_points, dim=1)
+            print(f"Motion boundaries time: {time.time() - motion_boundaries_time}")
 
             # src_points are diff
             with torch.no_grad():

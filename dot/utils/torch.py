@@ -37,21 +37,47 @@ def differentiate(mask):
     return diff
 
 
-def sample_points(step, boundaries, num_samples):
+def sample_points(
+    step, boundaries, num_samples, random_sampling=True, boundary_sampling_ratio=0.5
+):
+    """
+    random_sampling: if True, sample random points in addition to boundary points
+    """
     if boundaries.ndim == 3:
         points = []
         for boundaries_k in boundaries:
             points_k = sample_points(step, boundaries_k, num_samples)
             points.append(points_k)
         points = torch.stack(points)
+
     else:
         H, W = boundaries.shape
-        boundary_points, _ = sample_mask_points(step, boundaries, num_samples // 2)
+        # sample boundary points first rather than random sampling
+        # it was for CVO benchmark, which is used for optical flow estimation
+        # boundary_points, _ = sample_mask_points(step, boundaries num_samples)
+
+        if random_sampling == False:
+            assert (
+                boundary_sampling_ratio == 1
+            ), "boundary_sampling_ratio should be 1 if random_sampling is False"
+
+        num_points = int(num_samples * boundary_sampling_ratio)
+
+        boundary_points, _ = sample_mask_points(step, boundaries, num_points)
         num_boundary_points = boundary_points.shape[0]
         num_random_points = num_samples - num_boundary_points
-        random_points = sample_random_points(step, H, W, num_random_points)
-        random_points = random_points.to(boundary_points.device)
-        points = torch.cat((boundary_points, random_points), dim=0)
+
+        # random_points = sample_random_points(step, H, W, num_random_points)
+        # random_points = random_points.to(boundary_points.device)
+        # points = torch.cat((boundary_points, random_points), dim=0)
+
+        if random_sampling:
+            random_points = sample_random_points(step, H, W, num_random_points)
+            random_points = random_points.to(boundary_points.device)
+            points = torch.cat((boundary_points, random_points), dim=0)
+        else:
+            points = boundary_points
+
     return points
 
 
@@ -59,6 +85,7 @@ def sample_mask_points(step, mask, num_points):
     num_nonzero = int(mask.sum())
     i, j = torch.nonzero(mask, as_tuple=True)
     if num_points < num_nonzero:
+        # if num_points < num_nonzero, sample from the nonzero points
         sample = np.random.choice(num_nonzero, size=num_points, replace=False)
         i, j = i[sample], j[sample]
     t = torch.ones_like(i) * step
@@ -75,7 +102,15 @@ def sample_random_points(step, height, width, num_points):
     return points.float()
 
 
-def get_grid(height, width, shape=None, dtype="torch", device="cpu", align_corners=True, normalize=True):
+def get_grid(
+    height,
+    width,
+    shape=None,
+    dtype="torch",
+    device="cpu",
+    align_corners=True,
+    normalize=True,
+):
     H, W = height, width
     S = shape if shape else []
     if align_corners:
@@ -103,7 +138,7 @@ def get_sobel_kernel(kernel_size):
     K = kernel_size
     sobel = torch.tensor(list(range(K))) - K // 2
     sobel_x, sobel_y = sobel.view(-1, 1), sobel.view(1, -1)
-    sum_xy = sobel_x ** 2 + sobel_y ** 2
+    sum_xy = sobel_x**2 + sobel_y**2
     sum_xy[sum_xy == 0] = 1
     sobel_x, sobel_y = sobel_x / sum_xy, sobel_y / sum_xy
     sobel_kernel = torch.stack([sobel_x.unsqueeze(0), sobel_y.unsqueeze(0)], dim=0)
@@ -124,7 +159,9 @@ def get_alpha_consistency(bflow, fflow, thresh_1=0.01, thresh_2=0.5, thresh_mul=
     grid[..., 0] = grid[..., 0] + bflow[..., 0] / (W - 1)
     grid[..., 1] = grid[..., 1] + bflow[..., 1] / (H - 1)
     grid = grid * 2 - 1
-    fflow_warped = torch.nn.functional.grid_sample(fflow.permute(0, 3, 1, 2), grid, mode="bilinear", align_corners=True)
+    fflow_warped = torch.nn.functional.grid_sample(
+        fflow.permute(0, 3, 1, 2), grid, mode="bilinear", align_corners=True
+    )
     flow_diff = bflow + fflow_warped.permute(0, 2, 3, 1)
     occ_thresh = thresh_1 * mag + thresh_2
     occ_thresh = occ_thresh * thresh_mul
