@@ -60,12 +60,12 @@ class PointTracker(nn.Module):
             "tapir": Tapir,
             "bootstapir": Tapir,
         }
-        print(f"Using model {model_args.name}")
         # print arguments
-        print(f"Height: {height}, Width: {width}")
-        print(f"Model arguments: {model_args}")
-        print(f"Estimator config: {estimator_config}, Estimator path: {estimator_path}")
-        print(f"Tracker path: {tracker_path}")
+        # print(f"Using model {model_args.name}")
+        # print(f"Height: {height}, Width: {width}")
+        # print(f"Model arguments: {model_args}")
+        # print(f"Estimator config: {estimator_config}, Estimator path: {estimator_path}")
+        # print(f"Tracker path: {tracker_path}")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -99,6 +99,7 @@ class PointTracker(nn.Module):
         sample_mode="all",
         random_sampling=True,
         boundary_sampling_ratio=0.5,
+        debug=False,
         **kwargs,
     ):
         video = data["video"]
@@ -152,7 +153,7 @@ class PointTracker(nn.Module):
         print(
             f"Sample mode: {sample_mode}, Number of samples per step: {samples_per_step}"
         )
-
+        
         motion_boundaries_time = time.time()
         for _ in tqdm(range(N // S), desc="Track batch of points", leave=False):
             src_points = []
@@ -186,7 +187,8 @@ class PointTracker(nn.Module):
                 )
 
             src_points = torch.cat(src_points, dim=1)
-            print(f"Motion boundaries time: {time.time() - motion_boundaries_time}")
+            if debug:
+                print(f"Motion boundaries time: {time.time() - motion_boundaries_time}")
 
             # src_points are diff
             with torch.no_grad():
