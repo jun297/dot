@@ -2,11 +2,10 @@ import time
 from functools import wraps
 
 import torch
-from torch import nn
-from tqdm import tqdm
-
 from dot.utils.io import read_config
 from dot.utils.torch import get_grid, sample_mask_points, sample_points
+from torch import nn
+from tqdm import tqdm
 
 from .optical_flow import OpticalFlow
 from .shelf import CoTracker, CoTracker2, Tapir
@@ -153,7 +152,7 @@ class PointTracker(nn.Module):
         print(
             f"Sample mode: {sample_mode}, Number of samples per step: {samples_per_step}"
         )
-        
+
         motion_boundaries_time = time.time()
         for _ in tqdm(range(N // S), desc="Track batch of points", leave=False):
             src_points = []

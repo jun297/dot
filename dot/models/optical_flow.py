@@ -1,10 +1,9 @@
 import torch
 import torch.nn.functional as F
-from torch import nn
-from tqdm import tqdm
-
 from dot.utils.io import read_config
 from dot.utils.torch import get_grid, get_sobel_kernel
+from torch import nn
+from tqdm import tqdm
 
 from .interpolation import interpolate
 from .shelf import RAFT
