@@ -2,10 +2,11 @@ import time
 from functools import wraps
 
 import torch
-from dot.utils.io import read_config
-from dot.utils.torch import get_grid, sample_mask_points, sample_points
 from torch import nn
 from tqdm import tqdm
+
+from dot.utils.io import read_config
+from dot.utils.torch import get_grid, sample_mask_points, sample_points
 
 from .optical_flow import OpticalFlow
 from .shelf import CoTracker, CoTracker2, Tapir
@@ -199,6 +200,8 @@ class PointTracker(nn.Module):
             cache_features = False
         tracks = torch.cat(tracks, dim=2)
 
+        # can we split tracks into
+        # motion_tracks, random_tracks?
         if flip:
             tracks = tracks.flip(dims=[1])
 

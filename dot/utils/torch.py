@@ -46,7 +46,12 @@ def sample_points(
     if boundaries.ndim == 3:
         points = []
         for boundaries_k in boundaries:
-            points_k = sample_points(step, boundaries_k, num_samples)
+            points_k = sample_points(
+                step,
+                boundaries_k,
+                num_samples,
+                boundary_sampling_ratio=boundary_sampling_ratio,
+            )
             points.append(points_k)
         points = torch.stack(points)
 
@@ -70,10 +75,11 @@ def sample_points(
         # random_points = sample_random_points(step, H, W, num_random_points)
         # random_points = random_points.to(boundary_points.device)
         # points = torch.cat((boundary_points, random_points), dim=0)
-
         if random_sampling:
             random_points = sample_random_points(step, H, W, num_random_points)
-            random_points = random_points.to(boundary_points.device)
+            random_points = random_points.to(
+                boundary_points.device
+            )  # [num_random_samples, 3], (t, x, y)
             points = torch.cat((boundary_points, random_points), dim=0)
         else:
             points = boundary_points
