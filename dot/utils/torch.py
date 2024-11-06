@@ -90,6 +90,7 @@ def sample_points(
 def sample_mask_points(step, mask, num_points):
     num_nonzero = int(mask.sum())
     i, j = torch.nonzero(mask, as_tuple=True)
+    
     if num_points < num_nonzero:
         # if num_points < num_nonzero, sample from the nonzero points
         sample = np.random.choice(num_nonzero, size=num_points, replace=False)
@@ -104,6 +105,7 @@ def sample_random_points(step, height, width, num_points):
     x = torch.randint(width, size=[num_points])
     y = torch.randint(height, size=[num_points])
     t = torch.ones(num_points) * step
+    
     points = torch.stack((t, x, y), dim=-1)  # [num_points, 3]
     return points.float()
 
